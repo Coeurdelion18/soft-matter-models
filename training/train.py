@@ -1,0 +1,93 @@
+import torch
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+
+from model import SimpleUnet, device
+from forward_diffusion import T
+from GenerateDataset import HexLatticeDataset
+from model import get_loss
+
+# =========================================================
+# Parameters
+# =========================================================
+
+BATCH_SIZE = 32
+LEARNING_RATE = 1e-4
+EPOCHS = 50
+
+DATASET_PATH = "hex_lattice_dataset.npy"
+
+MODEL_SAVE_PATH = "diffusion_model.pth"
+
+# =========================================================
+# Load Dataset
+# =========================================================
+
+dataset = HexLatticeDataset(DATASET_PATH)
+
+dataloader = DataLoader(
+    dataset,
+    batch_size=BATCH_SIZE,
+    shuffle=True
+)
+
+# =========================================================
+# Model
+# =========================================================
+
+model = SimpleUnet().to(device)
+
+optimizer = torch.optim.Adam(
+    model.parameters(),
+    lr=LEARNING_RATE
+)
+
+# =========================================================
+# Training Loop
+# =========================================================
+
+for epoch in range(EPOCHS):
+
+    model.train()
+
+    epoch_loss = 0
+
+    progress_bar = tqdm(dataloader)
+
+    for step, batch in enumerate(progress_bar):
+
+        optimizer.zero_grad()
+
+        batch = batch.to(device)
+
+        # Random timestep for each image
+        t = torch.randint(
+            0,
+            T,
+            (batch.shape[0],),
+            device=device
+        ).long()
+
+        loss = get_loss(model, batch, t)
+
+        loss.backward()
+
+        optimizer.step()
+
+        epoch_loss += loss.item()
+
+        progress_bar.set_description(
+            f"Epoch {epoch+1} | Loss: {loss.item():.6f}"
+        )
+
+    avg_loss = epoch_loss / len(dataloader)
+
+    print(f"\nEpoch {epoch+1} Average Loss: {avg_loss:.6f}")
+
+# =========================================================
+# Save Model
+# =========================================================
+
+torch.save(model.state_dict(), MODEL_SAVE_PATH)
+
+print(f"\nModel saved to: {MODEL_SAVE_PATH}")
