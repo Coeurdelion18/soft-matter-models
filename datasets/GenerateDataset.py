@@ -5,7 +5,9 @@ from tqdm import tqdm
 
 from datasets.GridGeneration import (
     generateHexagonalGrid,
-    coords_to_density_grid
+    coords_to_density_grid,
+    generate_diatomic_density_grid,
+    generate_two_channel_density_grid
 )
 
 import torch
@@ -15,7 +17,7 @@ from torch.utils.data import Dataset
 # Dataset generation parameters
 # =========================================================
 
-NUM_SAMPLES = 1500
+NUM_SAMPLES = 500
 
 NX = 48
 NY = 48
@@ -32,40 +34,70 @@ OUTPUT_FILE = "hex_lattice_dataset.npy"
 # Generate dataset
 # =========================================================
 
-if __name__ == "__main__":
-    dataset = []
+# if __name__ == "__main__":
+#     dataset = []
 
+#     for _ in tqdm(range(NUM_SAMPLES)):
+
+#         coords, box_size = generateHexagonalGrid(
+#             nx=NX,
+#             ny=NY,
+#             a=LATTICE_PARAMETER,
+#             defect_rate=DEFECT_RATE
+#         )
+
+#         density_grid = coords_to_density_grid(
+#             coords,
+#             box_size,
+#             grid_size=GRID_SIZE,
+#             sigma=SIGMA
+#         )
+
+#         # Normalize to [0, 1]
+#         density_grid = density_grid / density_grid.max()
+
+#         # Add channel dimension
+#         density_grid = density_grid.astype(np.float32)
+#         density_grid = density_grid[None, :, :]
+
+#         dataset.append(density_grid)
+
+#     # =========================================================
+#     # Convert to numpy array
+#     # =========================================================
+
+#     dataset = np.stack(dataset)
+
+#     print("Dataset shape:", dataset.shape)
+
+#     # Expected:
+#     # (NUM_SAMPLES, 1, GRID_SIZE, GRID_SIZE)
+
+#     # =========================================================
+#     # Save dataset
+#     # =========================================================
+
+#     np.save(OUTPUT_FILE, dataset)
+
+#     print(f"Dataset saved to: {OUTPUT_FILE}")
+
+if __name__ == "__main__":
+
+    dataset = []
     for _ in tqdm(range(NUM_SAMPLES)):
 
-        coords, box_size = generateHexagonalGrid(
-            nx=NX,
-            ny=NY,
-            a=LATTICE_PARAMETER,
-            defect_rate=DEFECT_RATE
-        )
-
-        density_grid = coords_to_density_grid(
-            coords,
-            box_size,
-            grid_size=GRID_SIZE,
-            sigma=SIGMA
-        )
+        coords, box_size = generateHexagonalGrid(nx=48, ny=48, a=1.0, defect_rate=0.10, pbc=False)
+        _, _, img = generate_two_channel_density_grid(coords, box_size, GRID_SIZE, sigma_a=0.5, sigma_b=0.7)
 
         # Normalize to [0, 1]
-        density_grid = density_grid / density_grid.max()
+        global_max = img.max()
 
-        # Add channel dimension
-        density_grid = density_grid.astype(np.float32)
-        density_grid = density_grid[None, :, :]
+        if global_max > 0:
+            img /= global_max
 
-        dataset.append(density_grid)
-
-    # =========================================================
-    # Convert to numpy array
-    # =========================================================
-
+        dataset.append(img)
+    
     dataset = np.stack(dataset)
-
     print("Dataset shape:", dataset.shape)
 
     # Expected:
@@ -75,9 +107,10 @@ if __name__ == "__main__":
     # Save dataset
     # =========================================================
 
-    np.save(OUTPUT_FILE, dataset)
+    np.save("data/raw/binary_two_channel_hex.npy", dataset)
 
-    print(f"Dataset saved to: {OUTPUT_FILE}")
+    print("Dataset saved to: binary_two_channel_hex.npy")
+
 
 class HexLatticeDataset(Dataset):
     

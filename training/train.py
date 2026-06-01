@@ -2,10 +2,10 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from model import SimpleUnet, device
-from forward_diffusion import T
-from GenerateDataset import HexLatticeDataset
-from model import get_loss
+from models.model import SimpleUnet, device
+from models.forward_diffusion import T
+from datasets.GenerateDataset import HexLatticeDataset
+from models.model import get_loss
 
 # =========================================================
 # Parameters
@@ -15,9 +15,9 @@ BATCH_SIZE = 32
 LEARNING_RATE = 1e-4
 EPOCHS = 50
 
-DATASET_PATH = "hex_lattice_dataset.npy"
+DATASET_PATH = "data/raw/binary_two_channel_hex.npy"
 
-MODEL_SAVE_PATH = "diffusion_model.pth"
+MODEL_SAVE_PATH = "diatomic_diffusion_model.pth"
 
 # =========================================================
 # Load Dataset

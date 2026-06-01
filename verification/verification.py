@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 from skimage.feature import peak_local_max
 from models.forward_diffusion import T
 from sampling.sample import sample_timestep
+from datasets.GenerateDataset import HexLatticeDataset
+from datasets.GridGeneration import show_two_channel_overlay
 
 # image_path = "new_gen.pt"
 # img = torch.load(image_path)
@@ -18,40 +20,47 @@ IMG_SIZE = 192
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-coord_lens = []
+def verify_monoatomic_statistics():
+    coord_lens = []
 
-for _ in range(2):
-    img = torch.randn(
-        (1, 1, IMG_SIZE, IMG_SIZE),
-        device=device
-    )
-
-    for i in range(T - 1, -1, -1):
-
-        t = torch.full(
-            (1,),
-            i,
-            device=device,
-            dtype=torch.long
+    for _ in range(2):
+        img = torch.randn(
+            (1, 1, IMG_SIZE, IMG_SIZE),
+            device=device
         )
 
-        img = sample_timestep(img, t)
+        for i in range(T - 1, -1, -1):
 
-        img = torch.clamp(
-            img,
-            -1.0,
-            1.0
-        )
+            t = torch.full(
+                (1,),
+                i,
+                device=device,
+                dtype=torch.long
+            )
 
-    img = img.squeeze()
-    img = torch.clamp(img, -1.0, 1.0)
-    img = (img + 1)/2
-    img = img.detach().cpu().numpy()
-    coords = peak_local_max(img, min_distance=2, threshold_abs=0.7)
-    coord_lens.append(len(coords))
-    
-coord_lens = np.array(coord_lens, dtype=float)
-print(f"Mean number of peaks: {np.mean(coord_lens)}")
-print(f"Standard deviation of number of peaks: {np.std(coord_lens)}")
+            img = sample_timestep(img, t)
 
-#We get 1900 +/- 25 peaks with the same dimensions as the sample images
+            img = torch.clamp(
+                img,
+                -1.0,
+                1.0
+            )
+
+        img = img.squeeze()
+        img = torch.clamp(img, -1.0, 1.0)
+        img = (img + 1)/2
+        img = img.detach().cpu().numpy()
+        coords = peak_local_max(img, min_distance=2, threshold_abs=0.7)
+        coord_lens.append(len(coords))
+        
+    coord_lens = np.array(coord_lens, dtype=float)
+    print(f"Mean number of peaks: {np.mean(coord_lens)}")
+    print(f"Standard deviation of number of peaks: {np.std(coord_lens)}")
+
+    #We get 1900 +/- 25 peaks with the same dimensions as the sample images
+
+if __name__ == "__main__":
+    PATH = "data/raw/npy002.npy"
+    dataset = np.load(PATH)
+    print(dataset.shape)
+    show_two_channel_overlay(dataset)
