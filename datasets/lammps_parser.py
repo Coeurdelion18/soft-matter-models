@@ -19,6 +19,8 @@ def read_lammps_data(filepath):
     """
 
     atoms = []
+    count_1 = 0
+    count_2 = 0
 
     xlo, xhi = None, None
     ylo, yhi = None, None
@@ -75,10 +77,16 @@ def read_lammps_data(filepath):
                 continue
 
             try:
-                # id mol type diameter x y z ix iy iz
+                # id type diameter x y z ix iy iz
 
-                particle_type = int(parts[2])
-                diameter = float(parts[3])
+                particle_type = int(parts[1])
+                if particle_type == 1:
+                    count_1 += 1
+
+                elif particle_type == 2:
+                    count_2 += 1
+
+                diameter = float(parts[2])
 
                 x = float(parts[4])
                 y = float(parts[5])
@@ -98,7 +106,7 @@ def read_lammps_data(filepath):
     box_size_x = xhi - xlo
     box_size_y = yhi - ylo
 
-    return atoms, xlo, ylo, box_size_x, box_size_y
+    return count_1, count_2, atoms, xlo, ylo, box_size_x, box_size_y
 
 
 def render_gaussian_channels(
@@ -108,7 +116,7 @@ def render_gaussian_channels(
     box_size_x,
     box_size_y,
     grid_size=192,
-    sigma_scale=1.0,
+    sigma_scale=0.22,
 ):
     """
     Render atoms into two Gaussian channels.
@@ -139,12 +147,12 @@ def render_gaussian_channels(
 
         particle_type = int(particle_type)
 
-        if particle_type not in [1, 2]:
-            continue
+        # if particle_type not in [1, 2]:
+        #     continue
 
         channel = particle_type - 1
 
-        sigma = 0.35 if particle_type == 1 else 0.50 #sigma_scale * (diameter / 2)
+        sigma = 0.20 if particle_type == 2 else 0.28 #sigma_scale * (diameter / 2)
 
         gaussian = np.exp(
             -(
@@ -169,7 +177,8 @@ def lammps_to_numpy(
     Convert LAMMPS file → 2-channel numpy array.
     """
 
-    (
+    (   count_1,
+        count_2,
         atoms,
         xlo,
         ylo,
@@ -177,12 +186,15 @@ def lammps_to_numpy(
         box_size_y
     ) = read_lammps_data(input_file)
 
-    print(f"Loaded {len(atoms)} atoms")
-    print(
-        f"Box size: "
-        f"{box_size_x:.3f} × "
-        f"{box_size_y:.3f}"
-    )
+    # print(f"Loaded {len(atoms)} atoms")
+    # print(
+    #     f"Box size: "
+    #     f"{box_size_x:.3f} × "
+    #     f"{box_size_y:.3f}"
+    # )
+    print(f"Total count: {len(atoms)}")
+    print(f"Type 1 particle count: {count_1}")
+    print(f"Type 2 particle count: {count_2}")
 
     image = render_gaussian_channels(
         atoms=atoms,
@@ -206,8 +218,8 @@ def lammps_to_numpy(
 
     np.save(output_file, image)
 
-    print(f"Saved to {output_file}")
-    print("Shape:", image.shape)
+    # print(f"Saved to {output_file}")
+    # print("Shape:", image.shape)
 
     return image
 
@@ -219,7 +231,7 @@ if __name__ == "__main__":
     image = lammps_to_numpy(
         input_file=FILE_PATH,
         output_file=OUTPUT_PATH,
-        grid_size=192,
+        grid_size=384,
         sigma_scale=1.0,   # sigma = diameter/2
         normalize=False
     )
