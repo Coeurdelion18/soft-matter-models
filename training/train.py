@@ -11,7 +11,7 @@ from models.model import get_loss
 # Parameters
 # =========================================================
 
-BATCH_SIZE = 32
+BATCH_SIZE = 8
 LEARNING_RATE = 1e-4
 EPOCHS = 50
 
@@ -68,11 +68,19 @@ for epoch in range(EPOCHS):
             device=device
         ).long()
 
-        loss = get_loss(model, batch, t)
+        scaler = torch.amp.GradScaler("cuda")
+        
+        with torch.amp.autocast("cuda"):
+            loss = get_loss(model, batch, t)
 
-        loss.backward()
+        # loss = get_loss(model, batch, t)
 
-        optimizer.step()
+        # loss.backward()
+
+        # optimizer.step()
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
         epoch_loss += loss.item()
 

@@ -169,13 +169,13 @@ class SimpleUnet(nn.Module):
 
         super().__init__()
 
-        image_channels = 1
+        image_channels = 2
 
         down_channels = (32, 64, 128, 256)
 
         up_channels = (256, 128, 64, 32)
 
-        out_dim = 1
+        out_dim = 2
 
         time_emb_dim = 32
 

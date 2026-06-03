@@ -150,7 +150,9 @@ def process_directory_dataset(directory_path, output_path):
         img = np.load(file)
         max_val = img.max()
         if max_val > 0:
-            img /= max_val
+            img = img/max_val
+        
+        img = img * 2 - 1
 
         images.append(img)
 
