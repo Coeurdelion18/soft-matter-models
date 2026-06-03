@@ -1,8 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-FILE_PATH = "data/raw/config/002"
-OUTPUT_PATH = "data/raw/npy002.npy"
+FILE_PATH = "data/raw/config/100"
+OUTPUT_PATH = "data/raw/npy100.npy"
 
 def read_lammps_data(filepath):
     """
@@ -192,9 +192,9 @@ def lammps_to_numpy(
     #     f"{box_size_x:.3f} × "
     #     f"{box_size_y:.3f}"
     # )
-    print(f"Total count: {len(atoms)}")
-    print(f"Type 1 particle count: {count_1}")
-    print(f"Type 2 particle count: {count_2}")
+    # print(f"Total count: {len(atoms)}")
+    # print(f"Type 1 particle count: {count_1}")
+    # print(f"Type 2 particle count: {count_2}")
 
     image = render_gaussian_channels(
         atoms=atoms,

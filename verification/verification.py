@@ -60,7 +60,8 @@ def verify_monoatomic_statistics():
     #We get 1900 +/- 25 peaks with the same dimensions as the sample images
 
 if __name__ == "__main__":
-    PATH = "data/raw/npy002.npy"
+    PATH = "data/raw/grain_boundary_dataset.npy"#"data/raw/config_npy/" + str(np.random.randint(100, 400)) + ".npy"
     dataset = np.load(PATH)
     print(dataset.shape)
-    show_two_channel_overlay(dataset)
+    x = dataset[0].squeeze()
+    show_two_channel_overlay(x)

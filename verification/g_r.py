@@ -28,7 +28,7 @@ def extract_coordinates(img: torch.Tensor):
 
     return coords_ch1, coords_ch2
 
-path = "data/raw/npy002.npy"
+path = "data/raw/npy100.npy"
 img = np.load(path)
 torch_img = torch.tensor(img)
 c1, c2 = extract_coordinates(torch_img)

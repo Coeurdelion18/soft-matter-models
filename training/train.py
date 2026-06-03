@@ -4,7 +4,7 @@ from tqdm import tqdm
 
 from models.model import SimpleUnet, device
 from models.forward_diffusion import T
-from datasets.GenerateDataset import HexLatticeDataset
+from datasets.GenerateDataset import HexLatticeDataset, GrainBoundaryDataset
 from models.model import get_loss
 
 # =========================================================
@@ -15,15 +15,15 @@ BATCH_SIZE = 32
 LEARNING_RATE = 1e-4
 EPOCHS = 50
 
-DATASET_PATH = "data/raw/binary_two_channel_hex.npy"
+DATASET_PATH = "data/raw/grain_boundary_dataset.npy"
 
-MODEL_SAVE_PATH = "diatomic_diffusion_model.pth"
+MODEL_SAVE_PATH = "checkpoints/grain_boundary_diffusion_model.pth"
 
 # =========================================================
 # Load Dataset
 # =========================================================
 
-dataset = HexLatticeDataset(DATASET_PATH)
+dataset = GrainBoundaryDataset(DATASET_PATH)
 
 dataloader = DataLoader(
     dataset,
