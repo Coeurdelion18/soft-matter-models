@@ -105,8 +105,8 @@ class Block(nn.Module):
             padding=1
         )
 
-        self.bnorm1 = nn.BatchNorm2d(out_ch)
-        self.bnorm2 = nn.BatchNorm2d(out_ch)
+        self.bnorm1 = nn.GroupNorm(8, out_ch) #nn.BatchNorm2d(out_ch)
+        self.bnorm2 = nn.GroupNorm(8, out_ch) #nn.BatchNorm2d(out_ch)
 
         self.relu = nn.ReLU()
 

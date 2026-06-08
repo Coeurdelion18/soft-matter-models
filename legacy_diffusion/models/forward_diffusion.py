@@ -10,7 +10,7 @@ from datasets.GenerateDataset import HexLatticeDataset
 # Parameters
 # =========================================================
 
-T = 300
+T = 50
 
 BATCH_SIZE = 32
 
@@ -25,7 +25,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 def linear_beta_schedule(
     timesteps,
     start=0.0001,
-    end=0.02
+    end=0.1
 ):
 
     return torch.linspace(start, end, timesteps)

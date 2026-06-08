@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 from models.model import SimpleUnet, device
 from models.forward_diffusion import T
@@ -13,11 +14,11 @@ from models.model import get_loss
 
 BATCH_SIZE = 8
 LEARNING_RATE = 1e-4
-EPOCHS = 50
+EPOCHS = 2000
 
-DATASET_PATH = "data/raw/grain_boundary_dataset.npy"
+DATASET_PATH = "data/raw/single_grain_boundary.npy" #"data/raw/grain_boundary_dataset.npy"
 
-MODEL_SAVE_PATH = "checkpoints/grain_boundary_diffusion_model.pth"
+MODEL_SAVE_PATH = "checkpoints/single_image_grain_boundary_T50_strong_schedule.pth"
 
 # =========================================================
 # Load Dataset
@@ -45,6 +46,7 @@ optimizer = torch.optim.Adam(
 # =========================================================
 # Training Loop
 # =========================================================
+losses = []
 
 for epoch in range(EPOCHS):
 
@@ -89,6 +91,7 @@ for epoch in range(EPOCHS):
         )
 
     avg_loss = epoch_loss / len(dataloader)
+    losses.append(avg_loss)
 
     print(f"\nEpoch {epoch+1} Average Loss: {avg_loss:.6f}")
 
@@ -99,3 +102,6 @@ for epoch in range(EPOCHS):
 torch.save(model.state_dict(), MODEL_SAVE_PATH)
 
 print(f"\nModel saved to: {MODEL_SAVE_PATH}")
+
+plt.plot(losses)
+plt.show()

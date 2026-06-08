@@ -242,14 +242,32 @@ def show_two_channel_overlay(
     ch2 = ch2.astype(float).copy()
 
     # Global normalization (important!)
+    # if normalize:
+    #     global_max = max(ch1.max(), ch2.max())
+
+    #     if global_max > 0:
+    #         ch1 /= global_max
+    #         ch2 /= global_max
+
+    # # Gamma correction to reveal Gaussian tails
+    # if gamma is not None:
+    #     ch1 = np.power(ch1, gamma)
+    #     ch2 = np.power(ch2, gamma)
+
+    # Convert from [-1,1] -> [0,1]
+    ch1 = (ch1 + 1.0) / 2.0
+    ch2 = (ch2 + 1.0) / 2.0
+
+    # Safety clip
+    ch1 = np.clip(ch1, 0.0, 1.0)
+    ch2 = np.clip(ch2, 0.0, 1.0)
+
     if normalize:
         global_max = max(ch1.max(), ch2.max())
-
         if global_max > 0:
             ch1 /= global_max
             ch2 /= global_max
 
-    # Gamma correction to reveal Gaussian tails
     if gamma is not None:
         ch1 = np.power(ch1, gamma)
         ch2 = np.power(ch2, gamma)

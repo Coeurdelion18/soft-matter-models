@@ -63,5 +63,7 @@ if __name__ == "__main__":
     PATH = "data/raw/grain_boundary_dataset.npy"#"data/raw/config_npy/" + str(np.random.randint(100, 400)) + ".npy"
     dataset = np.load(PATH)
     print(dataset.shape)
-    x = dataset[0].squeeze()
+    x = dataset[0:1] 
+    np.save("data/raw/single_grain_boundary.npy", x)
+    x = x.squeeze()
     show_two_channel_overlay(x)

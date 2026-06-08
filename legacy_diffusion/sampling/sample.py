@@ -9,14 +9,15 @@ from models.forward_diffusion import (
     get_index_from_list,
     show_tensor_image
 )
+from datasets.GridGeneration import show_two_channel_overlay
 
 # =========================================================
 # Parameters
 # =========================================================
 
-IMG_SIZE = 192
+IMG_SIZE = 384
 
-MODEL_PATH = "checkpoints/diffusion_model.pth"
+MODEL_PATH = "checkpoints/grain_boundary_diffusion_model.pth"
 
 # =========================================================
 # Load model
@@ -120,7 +121,7 @@ def sample_plot_image():
 
     # Start from pure Gaussian noise
     img = torch.randn(
-        (1, 1, IMG_SIZE, IMG_SIZE),
+        (1, 2, IMG_SIZE, IMG_SIZE),
         device=device
     )
 
@@ -195,9 +196,43 @@ def sample_plot_image():
     plt.tight_layout()
     plt.show()
 
+
+def sample_plot_two_channel_image():
+    img = torch.randn(
+        (1, 2, IMG_SIZE, IMG_SIZE),
+        device=device
+    )
+
+    num_images = 10
+    stepsize = T // num_images
+    for i in range(T - 1, -1, -1):
+
+        t = torch.full(
+            (1,),
+            i,
+            device=device,
+            dtype=torch.long
+        )
+
+        img = sample_timestep(img, t)
+
+        # img = torch.clamp(
+        #     img,
+        #     -1.0,
+        #     1.0
+        # )
+    
+    img = torch.clamp(
+            img,
+            -1.0,
+            1.0
+        )
+    show_two_channel_overlay(img.detach().cpu().squeeze())
+    
+
 # =========================================================
 # Run sampling
 # =========================================================
 
 if __name__ == "__main__":
-    sample_plot_image()
+    sample_plot_two_channel_image()
