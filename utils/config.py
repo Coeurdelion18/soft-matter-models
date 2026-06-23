@@ -1,0 +1,1 @@
+DATA_PATH = r"C:\Users\siddh\OneDrive\Documents\Projects\Point Pattern Generation\data\raw\config\001"
