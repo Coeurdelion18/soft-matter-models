@@ -43,20 +43,17 @@ def load_boxes():
     boxes = []
     for f in sorted(glob.glob("data/npy/*.npz")):
         d = np.load(f)
-        boxes.append({"pos": d["pos"], "types": d["type"], "sizes": d["size"]})
+        boxes.append({"pos": d["pos"], "type": d["type"], "size": d["size"]})
     return boxes
 
 
-def build_node_scalars(pos, types, sizes):
+def build_node_scalars(pos, type, size):
     """
     Build (N, N_SCALAR_FEATS) float array of per-particle features.
     Extend this function to add hexatic order, local density, etc.
     All features should be rotation/translation invariant scalars.
     """
-    # columns: [size, type_as_float]
-    # type is encoded as 0.0 / 1.0 so it goes through scalar_proj like any other feature
-    scalars = np.stack([sizes, types.astype(np.float32)], axis=-1)
-    return scalars.astype(np.float32)
+    
 
 
 def main():

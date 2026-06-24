@@ -93,8 +93,13 @@ def convert_directory(input_dir, output_dir):
         try:
             data = read_lammps_file(filepath)
 
-            output_file = output_dir / f"{filepath.stem}.npy"
-            np.save(output_file, data)
+            output_file = output_dir / f"{filepath.stem}.npz"
+            np.savez(
+                output_file.with_suffix(".npz"),
+                pos=data["pos"],
+                type=data["type"],
+                size=data["size"],
+            )
 
             print(f"Saved {output_file}")
 
