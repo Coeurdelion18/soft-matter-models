@@ -56,6 +56,7 @@ class EGNNLayer(nn.Module):
         #dst is of shape (E,)
         agg_m.index_add_(0, dst, m_ij)
         #index_add_ collects all messages arriving at the same destination node and stores it at agg_m[node]
+        agg_m /= deg.clamp(min=1)
 
         agg_x = torch.zeros(N, 2, device=h.device, dtype=h.dtype)
         agg_x.index_add_(0, dst, x_msg)
@@ -102,35 +103,34 @@ So we don't need another encoder to map between the two dimensions
 In the case of the conditional model for the cavitation problem, we have an encoder, but OUTSIDE the egnn layer (so h arrives as shape (N, hidden_dim) already)
 """
 class EGNNUnconditionalDenoiser(nn.Module):
-    def __init__(self, hidden_dim=128, n_layers=4, edge_feat_dim=1, global_cond_dim=0):
+    def __init__(self, hidden_dim=128, n_layers=4, edge_feat_dim=1, n_scalar_feats=2, global_cond_dim=0):
         super().__init__()
         self.global_cond_dim = global_cond_dim
-        #The input is just the noise-level embedding plus the optional global conditioning dimension
-        in_dim = 2 * hidden_dim + global_cond_dim + 2 # hidden_dim//2 each for the particle type/size embeddings
+        in_dim = 2 * hidden_dim + global_cond_dim  # time embedding + scalar projection
         self.input_mlp = mlp(in_dim, hidden_dim, hidden_dim)
 
         self.layers = nn.ModuleList([EGNNLayer(hidden_dim, edge_feat_dim=edge_feat_dim) for _ in range(n_layers)])
 
         self.time_embed = SinusoidalEmbedding(hidden_dim)
-        self.type_embed = nn.Embedding(2, hidden_dim // 2)
-        self.size_proj  = nn.Linear(1, hidden_dim // 2)
+        self.scalar_proj = nn.Linear(n_scalar_feats, hidden_dim)  # size, type, and any other scalars
         self.out_gate = mlp(hidden_dim, hidden_dim, 1)
-    
-    def forward(self, x_t, edge_index, edge_attr, noise_level, particle_types, particle_sizes, global_cond=None):
-        #x_t is the set of noisy positions (CoM-free) of the nodes - shape (N, 2)
-        #particle_types and particle_sizes are both (N, 1)
+
+    def forward(self, x_t, edge_index, edge_attr, noise_level, node_scalars, global_cond=None):
+        # x_t: (N, 2) noisy positions (CoM-free)
+        # node_scalars: (N, n_scalar_feats) — particle size, type (as 0/1), any other features
         N = x_t.shape[0]
         t_emb = self.time_embed(noise_level.expand(N, 1) if noise_level.shape[0] != N else noise_level)
-        #t_emb is of shape (N, hidden_dim)
-        #The time embedding takes the noise-level scalar to the embedding value for each of the N nodes
-        feats = [t_emb]
+        # t_emb: (N, hidden_dim)
+
+        scalar_emb = self.scalar_proj(node_scalars.float())  # (N, hidden_dim)
+
+        feats = [t_emb, scalar_emb]
         if self.global_cond_dim > 0:
             assert global_cond is not None
             feats.append(global_cond)
-        
-        type_emb = self.type_embed(particle_types.squeeze(-1).long())  # (N, hidden_dim//2)
-        size_emb = self.size_proj(particle_sizes.float().reshape(N, 1))  # (N, hidden_dim//2)
-        h = self.input_mlp(torch.cat([*feats, type_emb, size_emb], dim=-1))
+
+        h = self.input_mlp(torch.cat(feats, dim=-1))
+        #This above transform is what takes h to (N, hidden_dim) so that it is compatible with the EGNNLayer class
         x = x_t.clone()
         x_in = x_t
         for layer in self.layers:
