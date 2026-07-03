@@ -42,15 +42,15 @@ def build_edges_from_tensor(x, cutoff, max_neighbors=12):
     tree = cKDTree(x_np)
     pairs = tree.query_pairs(r=cutoff, output_type="ndarray")
 
-    if len(pairs) < N:
-        # fallback: kNN to keep graph connected during noisy early steps
-        k = min(max_neighbors, N - 1)
-        _, idxs = tree.query(x_np, k=k + 1)
-        src = np.repeat(np.arange(N), k)
-        dst = idxs[:, 1:].reshape(-1)
-    else:
-        src = np.concatenate([pairs[:, 0], pairs[:, 1]])
-        dst = np.concatenate([pairs[:, 1], pairs[:, 0]])
+    # if len(pairs) < N:
+    #     # fallback: kNN to keep graph connected during noisy early steps
+    k = min(max_neighbors, N - 1)
+    _, idxs = tree.query(x_np, k=k + 1)
+    src = np.repeat(np.arange(N), k)
+    dst = idxs[:, 1:].reshape(-1)
+    # else:
+    #     src = np.concatenate([pairs[:, 0], pairs[:, 1]])
+    #     dst = np.concatenate([pairs[:, 1], pairs[:, 0]])
 
     delta = x_np[src] - x_np[dst]
     dist  = np.linalg.norm(delta, axis=-1, keepdims=True).astype(np.float32)
@@ -80,11 +80,21 @@ class PositionDiffusion:
         x_t = ab.sqrt() * x0 + (1 - ab).sqrt() * noise
         return x_t, noise
 
-    def training_loss(self, model, x0, node_scalars, cutoff, t=None, global_cond=None):
+    def training_loss(self, model, x0, node_scalars, cutoff, t=None,
+                      global_cond=None, clamp_pred=False):
         """
         x0:           (N, 2)               real particle configuration
         node_scalars: (N, n_scalar_feats)  per-particle features (size, type, ...)
         cutoff:       radius for graph construction at the noised positions
+        clamp_pred:   if True, clamp pred_noise to [-10, 10] before computing
+                      loss. WARNING: tested and found to be harmful during
+                      training -- once predictions saturate the clamp,
+                      gradients through the clamped region are zero, so the
+                      model gets permanently stuck predicting near the clamp
+                      boundary (observed: loss flatlines at ~100 instead of
+                      decreasing). Left here disabled by default; use a
+                      smaller learning rate or a robust loss (e.g. Huber)
+                      instead if occasional large-loss steps are a problem.
         """
         x0 = remove_com(x0)
         N  = x0.shape[0]
@@ -98,11 +108,13 @@ class PositionDiffusion:
 
         pred_noise = model(x_t, edge_index, edge_attr, noise_level,
                            node_scalars, global_cond)
+        if clamp_pred:
+            pred_noise = torch.clamp(pred_noise, min=-10.0, max=10.0)
         return torch.nn.functional.mse_loss(pred_noise, noise)
 
     @torch.no_grad()
     def sample(self, model, n_particles, node_scalars, cutoff,
-               device=None, global_cond=None):
+               device=None, global_cond=None, verbose=False):
         """
         Generate one configuration of n_particles from pure noise.
 
@@ -122,6 +134,7 @@ class PositionDiffusion:
             edge_index, edge_attr = build_edges_from_tensor(x_t, cutoff)
             pred_noise = model(x_t, edge_index, edge_attr, noise_level,
                                node_scalars, global_cond)
+            pred_noise = torch.clamp(pred_noise, min=-10.0, max=10.0)
 
             alpha     = self.alphas[step]
             alpha_bar = self.alpha_bars[step]
@@ -136,5 +149,12 @@ class PositionDiffusion:
             else:
                 x_t = mean
             x_t = remove_com(x_t)  # re-center after every update to prevent drift
+
+            if verbose and step % 100 == 0:
+                print(f"  step {step}: x_t max abs = {x_t.abs().max().item():.4f}  "
+                     f"pred_noise max abs = {pred_noise.abs().max().item():.4f}")
+
+            if not torch.isfinite(x_t).all():
+                raise RuntimeError(f"x_t became non-finite at reverse step {step}")
 
         return x_t

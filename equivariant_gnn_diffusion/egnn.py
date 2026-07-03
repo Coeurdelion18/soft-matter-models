@@ -16,6 +16,7 @@ class EGNNLayer(nn.Module):
         self.edge_mlp = mlp(msg_in, hidden_dim, hidden_dim, act=act)
         self.vector_gate = mlp(hidden_dim, hidden_dim, 1, act=act)
         self.node_mlp = mlp(hidden_dim + hidden_dim, hidden_dim, hidden_dim, act=act)
+        self.norm = nn.LayerNorm(hidden_dim)
     #self.node_encoder = nn.Linear(node_feat_dim, hidden_dim)
         """
         Note: self.vector_gate is a scalar quantity which is used to scale the equivariant vector.
@@ -30,6 +31,7 @@ class EGNNLayer(nn.Module):
         src, dst = edge_index
         rel = x[src] - x[dst] #Dimension (E, 2), equivariant
         dist2 = (rel ** 2).sum(-1, keepdim=True) #Dimension (E, 1), invariant
+        dist2 = dist2.clamp(min=1e-8) #prevent divide-by-near-zero / blowups downstream
         #Equivariant GNNs use dist2 as an input because it is invariant under rotation and translation
 
         m_in = [h[src], h[dst], dist2]
@@ -56,7 +58,6 @@ class EGNNLayer(nn.Module):
         #dst is of shape (E,)
         agg_m.index_add_(0, dst, m_ij)
         #index_add_ collects all messages arriving at the same destination node and stores it at agg_m[node]
-        agg_m /= deg.clamp(min=1)
 
         agg_x = torch.zeros(N, 2, device=h.device, dtype=h.dtype)
         agg_x.index_add_(0, dst, x_msg)
@@ -65,9 +66,9 @@ class EGNNLayer(nn.Module):
         deg = torch.zeros(N, 1, device=h.device, dtype=h.dtype)
         deg.index_add_(0, dst, torch.ones(dst.shape[0], 1, device=h.device, dtype=h.dtype))
         #Aggregates the degree of node 'j' at deg[j]
-
+        agg_m /= deg.clamp(min=1)
         agg_x = agg_x / deg.clamp(min=1.0) #Because otherwise, nodes with a large in-degree move much more than those with a smaller one
-        h_new = h + self.node_mlp(torch.cat([h, agg_m], dim=-1))
+        h_new = self.norm(h + self.node_mlp(torch.cat([h, agg_m], dim=-1)))
         #h is of shape (N, F)
         #agg_m is of shape (N, F)
         #Concatenating gives you a tensor of shape (N, 2F)

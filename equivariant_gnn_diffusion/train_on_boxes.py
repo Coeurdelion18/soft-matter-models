@@ -27,12 +27,13 @@ from scipy.spatial import cKDTree
 import glob
 from egnn import EGNNUnconditionalDenoiser
 from diffusion import PositionDiffusion
-
+from node_features import normalise_scalars, build_node_scalars
+from tqdm import tqdm
 # ── Hyperparameters ────────────────────────────────────────────────────────────
 CUTOFF          = 1.5    # set to first minimum of g(r) for your system
 HIDDEN_DIM      = 128
 N_LAYERS        = 4      # 2 = information from second-nearest graph neighbours
-N_SCALAR_FEATS  = 2      # size + type; add more if you extend build_node_scalars()
+N_SCALAR_FEATS  = 9      # size + type; add more if you extend build_node_scalars()
 N_STEPS         = 1000
 LR              = 2e-4
 N_EPOCHS        = 50
@@ -40,20 +41,22 @@ VAL_FRACTION    = 0.1    # fraction of boxes held out; split at box level, not p
 # ──────────────────────────────────────────────────────────────────────────────
 
 def load_boxes():
+    paths = sorted(glob.glob("data/npy/*.npz"))
     boxes = []
-    for f in sorted(glob.glob("data/npy/*.npz")):
-        d = np.load(f)
-        boxes.append({"pos": d["pos"], "type": d["type"], "size": d["size"]})
+    for f in tqdm(paths, desc="loading boxes", unit="box"):
+        d        = np.load(f)
+        pos      = d["pos"]
+        types    = d["type"]
+        sizes    = d["size"]
+        box_size = d["box_size"]
+        boxes.append({
+            "pos":          pos,
+            "type":         types,
+            "size":         sizes,
+            "box_size":     box_size,
+            "node_scalars": build_node_scalars(pos, types, sizes, box_size),
+        })
     return boxes
-
-
-def build_node_scalars(pos, type, size):
-    """
-    Build (N, N_SCALAR_FEATS) float array of per-particle features.
-    Extend this function to add hexatic order, local density, etc.
-    All features should be rotation/translation invariant scalars.
-    """
-    
 
 
 def main():
@@ -67,6 +70,19 @@ def main():
     val_set = all_boxes[:n_val]
     train_set = all_boxes[n_val:]
 
+    train_scalars = [b["node_scalars"] for b in train_set]
+    norm_train, feat_mean, feat_std = normalise_scalars(train_scalars)
+    for box, ns in zip(train_set, norm_train):
+        box["node_scalars"] = ns
+
+    # apply same stats to val — not val's own mean/std
+    for box in val_set:
+        box["node_scalars"] = (box["node_scalars"] - feat_mean) / feat_std
+
+    # save alongside the model checkpoint so you can apply it at sampling time
+    os.makedirs("checkpoints", exist_ok=True)
+    np.savez("checkpoints/feature_stats.npz", mean=feat_mean, std=feat_std)
+
     # ── Model ─────────────────────────────────────────────────────────────────
     model = EGNNUnconditionalDenoiser(
         hidden_dim=HIDDEN_DIM,
@@ -78,11 +94,13 @@ def main():
 
     # ── Training loop ─────────────────────────────────────────────────────────
     best_val_loss = float("inf")
-    for epoch in range(N_EPOCHS):
+    epoch_bar = tqdm(range(N_EPOCHS), desc="training", unit="epoch")
+    for epoch in epoch_bar:
         # --- train ---
         model.train()
         train_loss, n = 0.0, 0
-        for box in train_set:
+        train_bar = tqdm(train_set, desc=f"  train {epoch}", unit="box", leave=False)
+        for box in train_bar:
             x0     = torch.from_numpy(box["pos"]).to(device)
             scalars = torch.from_numpy(box["node_scalars"]).to(device)
             opt.zero_grad()
@@ -92,22 +110,25 @@ def main():
             opt.step()
             train_loss += loss.item()
             n += 1
+            train_bar.set_postfix(loss=f"{loss.item():.4f}")
 
         # --- val ---
         model.eval()
         val_loss, nv = 0.0, 0
+        val_bar = tqdm(val_set, desc=f"  val   {epoch}", unit="box", leave=False)
         with torch.no_grad():
-            for box in val_set:
+            for box in val_bar:
                 x0      = torch.from_numpy(box["pos"]).to(device)
                 scalars = torch.from_numpy(box["node_scalars"]).to(device)
                 loss = diffusion.training_loss(model, x0, scalars, cutoff=CUTOFF)
                 val_loss += loss.item()
                 nv += 1
+                val_bar.set_postfix(loss=f"{loss.item():.4f}")
 
         tl = train_loss / max(n, 1)
         vl = val_loss  / max(nv, 1)
-        print(f"epoch {epoch:3d}: train loss = {tl:.4f}  val loss = {vl:.4f}")
-
+        #print(f"epoch {epoch:3d}: train loss = {tl:.4f}  val loss = {vl:.4f}")
+        epoch_bar.set_postfix(train=f"{tl:.4f}", val=f"{vl:.4f}", best=f"{best_val_loss:.4f}")
         os.makedirs("checkpoints", exist_ok=True)
         if vl < best_val_loss:
             best_val_loss = vl
