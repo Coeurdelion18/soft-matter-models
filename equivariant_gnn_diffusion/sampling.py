@@ -1,13 +1,16 @@
 """
-Generate a new particle configuration from pure noise using the trained
-unconditional denoiser, and visualize it.
+Generate new particle configurations from pure noise with the trained
+unconditional denoiser, and visualize them.
 
 Usage:
-    python sample.py
+    python sampling.py
 
-Requires checkpoints/model_best.pt (or model_final.pt) and
-checkpoints/feature_stats.npz, both produced by train_patched.py.
+Requires checkpoints/model_best.pt (or model_final.pt) produced by
+train_patched.py. All architecture settings and the coordinate scale are
+read from the checkpoint, so nothing here needs to match by hand.
 """
+
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -16,160 +19,111 @@ from tqdm import tqdm
 
 from egnn import EGNNUnconditionalDenoiser
 from diffusion import PositionDiffusion
+from train_patched import identity_scalars
 
-# ── Config -- must match train_patched.py ─────────────────────────────────────
-# ── Config -- must match train_patched.py ─────────────────────────────────────
-CHECKPOINT     = "checkpoints/model_best.pt"
-FEATURE_STATS  = "checkpoints/feature_stats.npz"
+# ── Config ────────────────────────────────────────────────────────────────────
+CHECKPOINT      = "checkpoints/model_best.pt"
+OUT_DIR         = "generated_samples"   # coordinates saved here as npz for evaluate.py
 
-CUTOFF         = 1.5
-HIDDEN_DIM     = 128
-N_LAYERS       = 4
-N_SCALAR_FEATS = 9
-N_STEPS        = 1000
-
-# full-box generation
-N_PARTICLES     = 1000     # match your real simulation box size
-DEFECT_FRACTION = 5/1000      # set this to your ACTUAL defect ratio if known --
-                            # e.g. if your real boxes have exactly 200 defects,
-                            # use 200/10050 instead of an approximate fraction
+N_PARTICLES     = 4000          # match the patch size the model was trained on
+DEFECT_FRACTION = 50 / 10050    # composition of the real boxes
 SIZE_SMALL      = 1.0
 SIZE_LARGE      = 1.4
 
-N_SAMPLES       = 1         # drop to 1 for full-box runs -- each sample is
-                            # now expensive; generate more only once you've
-                            # confirmed one looks right
-# ───────────────────────────────────────────────────────────────────────────────
+N_SAMPLES       = 1
+USE_EMA         = True          # EMA weights sample noticeably better
+CORRECTOR_STEPS = 1             # Langevin corrector iterations per reverse step
+                                # (0 = plain ancestral DDPM; 1 doubles sampling
+                                # cost but lets the configuration anneal)
+# ──────────────────────────────────────────────────────────────────────────────
 
 
-def build_sampling_node_scalars(n_particles, defect_fraction, size_small,
-                                 size_large, feat_mean, feat_std):
+def build_sampling_identity(n_particles, defect_fraction, size_small, size_large):
     """
-    Build the (N, 9) node_scalars tensor needed at sampling time.
+    Choose a composition (how many of each type) and encode it.
 
-    Structural features (voronoi_area, coordination, perimeter, neighbour
-    distances, psi6, psi4 -- columns 0-6) are NOT knowable before positions
-    exist, since they depend on the configuration itself. We set them to
-    their normalised mean (0.0 after z-scoring) so the model receives
-    "assume average local structure" rather than a misleading guess.
-
-    size (col 7) and type (col 8) ARE knowable upfront -- they're an
-    identity choice the caller makes, not something derived from geometry.
-    These are set to real values and then normalised with the same stats
-    used during training.
+    NOTE the dataset's type convention is inverted vs the obvious one:
+    type 0 = large defect (diameter 1.4), type 1 = small (diameter 1.0).
+    The conditioning must match what the model saw during training, so we
+    reproduce that convention here and use size (not type) for plotting.
     """
     n_large = int(round(n_particles * defect_fraction))
     n_small = n_particles - n_large
 
     sizes = np.array([size_small] * n_small + [size_large] * n_large,
                      dtype=np.float32)
-    types = np.array([0.0] * n_small + [1.0] * n_large, dtype=np.float32)
+    types = np.array([1.0] * n_small + [0.0] * n_large, dtype=np.float32)
 
-    # shuffle so small/large aren't spatially correlated by index order
-    perm  = np.random.permutation(n_particles)
-    sizes = sizes[perm]
-    types = types[perm]
-
-    # structural columns: raw value 0 (we don't know it), which becomes
-    # -mean/std after normalisation -- but since we want "average" (i.e.
-    # normalised 0), we directly set normalised value to 0 for those columns
-    scalars_norm = np.zeros((n_particles, N_SCALAR_FEATS), dtype=np.float32)
-
-    # size and type: normalise using the same training statistics
-    scalars_norm[:, 7] = (sizes - feat_mean[7]) / feat_std[7]
-    scalars_norm[:, 8] = (types - feat_mean[8]) / feat_std[8]
-
-    return scalars_norm, types
+    perm = np.random.permutation(n_particles)
+    sizes, types = sizes[perm], types[perm]
+    return identity_scalars(sizes, types), sizes, types
 
 
-def plot_configuration(pos, types, sizes, title, save_path=None, ax=None):
-    """
-    Scatter plot of a generated configuration.
-    Small particles in green, large defects in red -- matching the
-    two-channel overlay convention from the original LAMMPS visualizations.
-    """
-    standalone = ax is None
-    if standalone:
-        fig, ax = plt.subplots(figsize=(7, 7))
-
-    small_mask = types < 0.5
+def plot_configuration(pos, types, sizes, title, ax):
+    small_mask = sizes < 1.2
     large_mask = ~small_mask
-
-    # marker size roughly proportional to particle diameter, scaled for visibility
     ax.scatter(pos[small_mask, 0], pos[small_mask, 1],
-              s=(sizes[small_mask] * 30) ** 1.3, c="#2a8c4a",
-              edgecolors="none", alpha=0.85, label="small")
+               s=(sizes[small_mask] * 30) ** 1.3, c="#2a8c4a",
+               edgecolors="none", alpha=0.85, label="small")
     ax.scatter(pos[large_mask, 0], pos[large_mask, 1],
-              s=(sizes[large_mask] * 30) ** 1.3, c="#c0392b",
-              edgecolors="none", alpha=0.95, label="large (defect)")
-
+               s=(sizes[large_mask] * 30) ** 1.3, c="#c0392b",
+               edgecolors="none", alpha=0.95, label="large (defect)")
     ax.set_aspect("equal")
     ax.set_title(title, fontsize=10)
     ax.legend(fontsize=8, loc="upper right")
     ax.set_xticks([])
     ax.set_yticks([])
 
-    if standalone:
-        fig.tight_layout()
-        if save_path:
-            fig.savefig(save_path, dpi=150, bbox_inches="tight")
-            print(f"saved {save_path}")
-        return fig
-    return ax
-
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"device: {device}")
 
-    # ── Load model ────────────────────────────────────────────────────────────
+    ckpt = torch.load(CHECKPOINT, map_location=device)
+    cfg = ckpt["config"]
+    coord_scale = ckpt["coord_scale"]
+    print(f"loaded {CHECKPOINT}  (coord_scale={coord_scale:.4f}, config={cfg})")
+
     model = EGNNUnconditionalDenoiser(
-        hidden_dim=HIDDEN_DIM,
-        n_layers=N_LAYERS,
-        n_scalar_feats=N_SCALAR_FEATS,
+        hidden_dim=cfg["hidden_dim"],
+        n_layers=cfg["n_layers"],
+        n_scalar_feats=cfg["n_scalar_feats"],
     ).to(device)
-    model.load_state_dict(torch.load(CHECKPOINT, map_location=device))
+    model.load_state_dict(ckpt["ema"] if USE_EMA else ckpt["model"])
     model.eval()
-    print(f"loaded {CHECKPOINT}")
 
-    # ── Load feature normalisation stats ─────────────────────────────────────
-    stats     = np.load(FEATURE_STATS)
-    feat_mean = stats["mean"]
-    feat_std  = stats["std"]
-    print(f"loaded {FEATURE_STATS}")
+    diffusion = PositionDiffusion(
+        n_steps=cfg["n_steps"], device=device, k_neighbors=cfg["k_neighbors"],
+        schedule=cfg.get("schedule", "cosine"),
+    )
 
-    diffusion = PositionDiffusion(n_steps=N_STEPS, device=device)
+    Path(OUT_DIR).mkdir(exist_ok=True)
 
-    # ── Sample ────────────────────────────────────────────────────────────────
     fig, axes = plt.subplots(1, N_SAMPLES, figsize=(7 * N_SAMPLES, 7))
     if N_SAMPLES == 1:
         axes = [axes]
 
     for i in tqdm(range(N_SAMPLES), desc="sampling", unit="config"):
-        scalars_norm, types = build_sampling_node_scalars(
+        cond, sizes, types = build_sampling_identity(
             N_PARTICLES, DEFECT_FRACTION, SIZE_SMALL, SIZE_LARGE,
-            feat_mean, feat_std,
         )
-        node_scalars = torch.from_numpy(scalars_norm)
-
         x_gen = diffusion.sample(
             model,
             n_particles=N_PARTICLES,
-            node_scalars=node_scalars,
-            cutoff=CUTOFF,
-            feat_mean=feat_mean,
-            feat_std=feat_std,
+            node_scalars=torch.from_numpy(cond),
             device=device,
+            corrector_steps=CORRECTOR_STEPS,
+            verbose=True,
         )
-        pos = x_gen.cpu().numpy()
+        pos = x_gen.cpu().numpy() * coord_scale   # back to physical units
 
-        # recover unnormalised sizes for plotting marker scale
-        sizes = scalars_norm[:, 7] * feat_std[7] + feat_mean[7]
+        out_path = Path(OUT_DIR) / f"sample_{i:03d}.npz"
+        np.savez(out_path, pos=pos.astype(np.float32), types=types, sizes=sizes)
+        print(f"saved {out_path}  (run: python evaluate.py {out_path})")
 
-        n_large = int(types.sum())
         plot_configuration(
             pos, types, sizes,
-            title=f"sample {i}  |  N={N_PARTICLES}  defects={n_large}",
+            title=f"sample {i}  |  N={N_PARTICLES}  defects={int((sizes > 1.2).sum())}",
             ax=axes[i],
         )
 

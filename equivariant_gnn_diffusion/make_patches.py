@@ -30,8 +30,9 @@ from node_features import build_node_scalars
 NPY_DIR        = "data/npy"         # input: full simulation boxes
 PATCH_DIR      = "data/patches"     # output: individual patch files
 
-N_TARGET       = 1000               # target particles per patch
-                                    # tune down if still OOM, up if GPU has headroom
+N_TARGET       = 4000               # target particles per patch (~110 diameters wide,
+                                    # several grains + boundary junctions per patch;
+                                    # measured 2.1 GB VRAM per training step on RTX 4050)
 
 OVERLAP        = 0.5                # fraction of patch diameter to overlap
                                     # 0.0 = no overlap (fewest patches)
@@ -39,7 +40,7 @@ OVERLAP        = 0.5                # fraction of patch diameter to overlap
                                     # 0.5 recommended: ensures boundary segments
                                     # near grid lines aren't split across patches
 
-MIN_PARTICLES  = 200                # discard patches with fewer than this
+MIN_PARTICLES  = 2000               # discard patches with fewer than this
                                     # (can happen at box edges)
 
 # train/val split — done at box level here so patches from the same box
@@ -131,6 +132,16 @@ def main():
     val_dir   = Path(PATCH_DIR) / "val"
     train_dir.mkdir(parents=True, exist_ok=True)
     val_dir.mkdir(parents=True, exist_ok=True)
+
+    # remove stale patches from previous runs -- a different N_TARGET yields
+    # fewer files per box, so leftovers would silently mix patch sizes
+    removed = 0
+    for d in (train_dir, val_dir):
+        for old in d.glob("*.npz"):
+            old.unlink()
+            removed += 1
+    if removed:
+        print(f"removed {removed} stale patch files")
 
     train_count = val_count = 0
 

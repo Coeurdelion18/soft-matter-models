@@ -1,4 +1,9 @@
 """
+DEPRECATED: superseded by train_patched.py. This script targets the old
+diffusion/egnn API (cutoff-based graphs, 9-feature conditioning, no
+coordinate normalisation) and will not run against the current modules.
+Kept only for reference.
+
 Train the unconditional generator for bidisperse grain boundary systems.
 
 Each training example is a boundary patch extracted from a full simulation
