@@ -30,18 +30,18 @@ from node_features import build_node_scalars
 NPY_DIR        = "data/npy"         # input: full simulation boxes
 PATCH_DIR      = "data/patches"     # output: individual patch files
 
-N_TARGET       = 4000               # target particles per patch (~110 diameters wide,
-                                    # several grains + boundary junctions per patch;
-                                    # measured 2.1 GB VRAM per training step on RTX 4050)
+N_TARGET       = 4900               # target particles per SQUARE patch (~70 diameters
+                                    # wide = 2-3 grain diameters, so several grains and
+                                    # boundary junctions per patch; ~2.6 GB VRAM/step
+                                    # on RTX 4050 by measured scaling)
 
-OVERLAP        = 0.5                # fraction of patch diameter to overlap
-                                    # 0.0 = no overlap (fewest patches)
-                                    # 0.5 = centers spaced by one radius (more patches)
-                                    # 0.5 recommended: ensures boundary segments
-                                    # near grid lines aren't split across patches
+N_CROPS_PER_BOX = 5                 # random fully-inside square crops per box
+                                    # (a fixed grid would give only ~1 full 70-wide
+                                    # square per 100-wide box; random offsets give
+                                    # diversity while keeping every patch a full square)
 
-MIN_PARTICLES  = 2000               # discard patches with fewer than this
-                                    # (can happen at box edges)
+MIN_PARTICLES  = int(N_TARGET * 0.85)   # sanity floor; full-square crops should
+                                        # always be near N_TARGET
 
 # train/val split — done at box level here so patches from the same box
 # never appear in both sets
@@ -49,34 +49,36 @@ VAL_FRACTION   = 0.1
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def compute_patch_radius(box_size, n_total, n_target):
+def compute_half_side(box_size, n_total, n_target):
     """
-    Radius that gives approximately n_target particles per circular patch,
-    assuming uniform particle density.
+    Half side-length of a square patch containing approximately n_target
+    particles, assuming uniform particle density.
     """
-    Lx, Ly     = box_size[0], box_size[1]
-    box_area   = Lx * Ly
-    density    = n_total / box_area
-    patch_area = n_target / density
-    return float(np.sqrt(patch_area / np.pi))
+    Lx, Ly  = box_size[0], box_size[1]
+    density = n_total / (Lx * Ly)
+    side    = float(np.sqrt(n_target / density))
+    return side / 2.0
 
 
-def grid_centers(pos, patch_radius, overlap):
-    """Use actual position extents rather than assuming origin at 0."""
-    spacing  = 2.0 * patch_radius * (1.0 - overlap)
-    pos_min  = pos.min(axis=0)
-    pos_max  = pos.max(axis=0)
-    xs = np.arange(pos_min[0] + patch_radius, pos_max[0], spacing)
-    ys = np.arange(pos_min[1] + patch_radius, pos_max[1], spacing)
-    centers = np.array([[x, y] for x in xs for y in ys], dtype=np.float32)
-    return centers
-
-
-def extract_patches_from_box(box_data, patch_radius, min_particles):
+def random_square_centers(pos, half_side, n_crops, rng):
     """
-    Extract all grid patches from one box.
+    Random patch centers such that the full square [c-h, c+h]^2 lies inside
+    the particle extent -- every patch is a complete square (no clipped
+    shapes, which would give the model inconsistent envelopes to learn).
+    """
+    lo = pos.min(axis=0) + half_side
+    hi = pos.max(axis=0) - half_side
+    if np.any(hi <= lo):
+        raise ValueError(
+            f"patch side {2*half_side:.1f} does not fit inside the box; "
+            f"reduce N_TARGET"
+        )
+    return rng.uniform(lo, hi, size=(n_crops, 2)).astype(np.float32)
 
-    box_data: dict with keys pos, type, size, box_size, node_scalars
+
+def extract_patches_from_box(box_data, half_side, min_particles, rng):
+    """
+    Extract N_CROPS_PER_BOX random square patches from one box.
 
     Returns list of dicts, each with:
         pos:          (M, 2)  positions shifted so patch CoM = 0
@@ -84,16 +86,13 @@ def extract_patches_from_box(box_data, patch_radius, min_particles):
     """
     pos      = box_data["pos"]            # (N, 2)
     scalars  = box_data["node_scalars"]   # (N, 9)
-    box_size = box_data["box_size"]       # (2,)
-    N        = len(pos)
 
-    centers = grid_centers(pos, patch_radius, OVERLAP)
+    centers = random_square_centers(pos, half_side, N_CROPS_PER_BOX, rng)
 
     patches = []
     for center in centers:
-        diffs = pos - center
-        dists = np.linalg.norm(diffs, axis=1)
-        mask  = dists <= patch_radius
+        diffs = np.abs(pos - center)
+        mask  = (diffs[:, 0] <= half_side) & (diffs[:, 1] <= half_side)
         idx   = np.where(mask)[0]
 
         if len(idx) < min_particles:
@@ -123,6 +122,7 @@ def main():
 
     # ── train / val split at box level ───────────────────────────────────────
     np.random.seed(42)   # fixed seed so split is reproducible across reruns
+    rng = np.random.default_rng(123)   # crop centers, reproducible
     shuffled  = np.random.permutation(len(paths))
     n_val     = max(1, int(len(paths) * VAL_FRACTION))
     val_idxs  = set(shuffled[:n_val].tolist())
@@ -163,10 +163,9 @@ def main():
             "box_size":     box_size,
         }
 
-        # compute patch radius from actual box dimensions and particle count
-        patch_radius = compute_patch_radius(box_size, len(pos), N_TARGET)
+        half_side = compute_half_side(box_size, len(pos), N_TARGET)
 
-        patches = extract_patches_from_box(box_data, patch_radius, MIN_PARTICLES)
+        patches = extract_patches_from_box(box_data, half_side, MIN_PARTICLES, rng)
 
         is_val  = file_idx in val_idxs
         out_dir = val_dir if is_val else train_dir
@@ -189,7 +188,7 @@ def main():
     print(f"  train patches: {train_count}  -> {train_dir}")
     print(f"  val   patches: {val_count}    -> {val_dir}")
     print(f"\nExpected particles per patch: ~{N_TARGET}")
-    print(f"Patch radius used: computed per box from N_TARGET={N_TARGET}")
+    print(f"Square patch side: computed per box from N_TARGET={N_TARGET}")
     print(f"\nUpdate train.py:")
     print(f"  TRAIN_DIR = '{train_dir}'")
     print(f"  VAL_DIR   = '{val_dir}'")

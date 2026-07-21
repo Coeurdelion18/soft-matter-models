@@ -57,7 +57,7 @@ def cosine_beta_schedule(n_steps, s=0.008):
     return betas.clamp(1e-8, 0.999).float()
 
 
-def logsigma_beta_schedule(n_steps, sigma_min=0.002, sigma_max=60.0):
+def logsigma_beta_schedule(n_steps, sigma_min=0.001, sigma_max=60.0):
     """
     Log-spaced noise-to-signal ladder (the Karras/EDM insight, expressed as
     a VP alpha_bar schedule): sigma_eff = sqrt(1-ab)/sqrt(ab) is geometric
@@ -73,7 +73,9 @@ def logsigma_beta_schedule(n_steps, sigma_min=0.002, sigma_max=60.0):
     lattice -> jitter) a proportional share of the steps.
 
     sigma_min: below the lattice-site thermal jitter in normalised units
-               (jitter ~0.003 for 4000-particle patches at coord_scale ~17)
+               (jitter ~0.002-0.003 depending on patch size / coord_scale;
+               0.001 is safe for both 4000-particle disks and 4900-particle
+               squares)
     sigma_max: large enough that x_T is indistinguishable from pure noise
     """
     sig = torch.logspace(math.log10(sigma_min), math.log10(sigma_max),
@@ -86,14 +88,18 @@ def logsigma_beta_schedule(n_steps, sigma_min=0.002, sigma_max=60.0):
 
 class PositionDiffusion:
     def __init__(self, n_steps=1000, device="cpu", k_neighbors=12,
-                 schedule="logsigma"):
+                 schedule="logsigma", sigma_min=0.001, sigma_max=60.0):
         self.n_steps = n_steps
         self.device = device
         self.k_neighbors = k_neighbors
         self.schedule = schedule
 
         if schedule == "logsigma":
-            betas = logsigma_beta_schedule(n_steps).to(device)
+            # sigma_min MUST match the value the checkpoint was trained with:
+            # the model learns the meaning of t/T through the ladder
+            # (0.002 for the July-4 circular-patch models, 0.001 afterwards)
+            betas = logsigma_beta_schedule(n_steps, sigma_min=sigma_min,
+                                           sigma_max=sigma_max).to(device)
         elif schedule == "cosine":
             betas = cosine_beta_schedule(n_steps).to(device)
         else:
@@ -111,10 +117,15 @@ class PositionDiffusion:
         return x_t, noise
 
     def training_loss(self, model, x0, node_scalars, t=None,
-                      low_t_frac=0.0, low_t_cut=0.15):
+                      low_t_frac=0.0, low_t_cut=0.15, field_fn=None):
         """
         x0:           (N, 2) clean positions, ALREADY divided by COORD_SCALE
         node_scalars: (N, F) identity features (size, type)
+        field_fn:     optional callable (N, 2) positions -> (N, 1) values of
+                      a conditioning field (e.g. coarse |psi6| map); queried
+                      at the CURRENT noisy positions and appended to
+                      node_scalars, so the model must be built with
+                      n_scalar_feats = F + 1
 
         low_t_frac: probability of drawing t from the lowest low_t_cut
             fraction of the schedule instead of uniformly. Crystalline order
@@ -136,13 +147,33 @@ class PositionDiffusion:
         edge_index = build_knn_edges(x_t, k=self.k_neighbors)
         noise_level = t.float().unsqueeze(-1) / self.n_steps
 
+        if field_fn is not None:
+            node_scalars = torch.cat([node_scalars, field_fn(x_t)], dim=-1)
+
         pred_noise = model(x_t, edge_index, noise_level, node_scalars)
         return torch.nn.functional.mse_loss(pred_noise, noise)
+
+    @staticmethod
+    def _overlap_force(x, radii, k=12):
+        """
+        Soft-disk overlap force on each particle (normalised units).
+        radii: (N,) contact radii; pair contact distance = r_i + r_j.
+        """
+        edge_index = build_knn_edges(x, k=k)
+        src, dst = edge_index
+        rel = x[src] - x[dst]                          # points dst -> src
+        d = rel.norm(dim=-1, keepdim=True).clamp(min=1e-6)
+        rc = (radii[src] + radii[dst]).unsqueeze(-1)
+        overlap = (rc - d).clamp(min=0.0)
+        f = torch.zeros_like(x)
+        f.index_add_(0, dst, -overlap * rel / d)       # push dst away from src
+        return f
 
     @torch.no_grad()
     def sample(self, model, n_particles, node_scalars, device=None,
                x0_clip=4.0, corrector_steps=0, corrector_snr=0.15,
-               verbose=False):
+               field_fn=None, field_guidance=1.0, repulsion_radii=None,
+               repulsion_strength=0.5, repulsion_frac=0.25, verbose=False):
         """
         Generate one configuration of n_particles from pure noise.
         Returns positions in NORMALISED units -- multiply by COORD_SCALE.
@@ -166,15 +197,47 @@ class PositionDiffusion:
             how the physical system orders too. Each corrector step costs
             one extra model evaluation per reverse step.
         corrector_snr: Langevin signal-to-noise step-size parameter.
+
+        field_fn: optional conditioning field (see training_loss); must be
+            supplied iff the model was trained with one. Use
+            field_conditioning.NullField() for unconditional generation
+            from a field-conditioned model.
+        field_guidance: classifier-free guidance weight w. The model output
+            becomes eps_null + w * (eps_cond - eps_null): 1.0 = plain
+            conditional, >1 amplifies how strongly the sample binds to the
+            target field (each step then costs two model evaluations).
+            Requires the model to have been trained with field dropout.
+        repulsion_radii: optional (N,) contact radii in NORMALISED units
+            (physical diameter / 2 / coord_scale). When given, a soft-disk
+            overlap force nudges the implied clean positions during the last
+            repulsion_frac of the reverse process -- removes the tail of
+            overlapping pairs and carves proper cavities around the large
+            defect particles, which plain MSE-trained denoising blurs over.
         """
         device = device or self.device
         x_t = remove_com(torch.randn(n_particles, 2, device=device))
         node_scalars = node_scalars.to(device)
+        if repulsion_radii is not None:
+            repulsion_radii = repulsion_radii.to(device)
+
+        def eps_model(x, lvl_t):
+            edge_index = build_knn_edges(x, k=self.k_neighbors)
+            if field_fn is None:
+                return model(x, edge_index, lvl_t, node_scalars)
+            eps_c = model(x, edge_index, lvl_t,
+                          torch.cat([node_scalars, field_fn(x)], dim=-1))
+            if field_guidance == 1.0:
+                return eps_c
+            from field_conditioning import NullField
+            eps_u = model(x, edge_index, lvl_t,
+                          torch.cat([node_scalars, NullField()(x)], dim=-1))
+            return eps_u + field_guidance * (eps_c - eps_u)
+
+        repulsion_start = int(self.n_steps * repulsion_frac)
 
         for step in reversed(range(self.n_steps)):
             noise_level = torch.full((1, 1), step / self.n_steps, device=device)
-            edge_index = build_knn_edges(x_t, k=self.k_neighbors)
-            pred_noise = model(x_t, edge_index, noise_level, node_scalars)
+            pred_noise = eps_model(x_t, noise_level)
 
             alpha = self.alphas[step]
             alpha_bar = self.alpha_bars[step]
@@ -190,6 +253,10 @@ class PositionDiffusion:
             if x0_clip is not None:
                 radii = x0_hat.norm(dim=-1, keepdim=True).clamp(min=1e-12)
                 x0_hat = x0_hat * (x0_clip / radii).clamp(max=1.0)
+            if repulsion_radii is not None and step < repulsion_start:
+                force = self._overlap_force(x0_hat, repulsion_radii,
+                                            k=self.k_neighbors)
+                x0_hat = x0_hat + repulsion_strength * force
 
             # DDPM posterior q(x_{t-1} | x_t, x0_hat)
             coef_x0 = alpha_bar_prev.sqrt() * beta / (1 - alpha_bar)
@@ -210,8 +277,7 @@ class PositionDiffusion:
                 sigma_lvl = (1 - self.alpha_bars[lvl]).sqrt()
                 lvl_t = torch.full((1, 1), lvl / self.n_steps, device=device)
                 for _ in range(corrector_steps):
-                    edge_index = build_knn_edges(x_t, k=self.k_neighbors)
-                    eps_hat = model(x_t, edge_index, lvl_t, node_scalars)
+                    eps_hat = eps_model(x_t, lvl_t)
                     score = -eps_hat / sigma_lvl
                     noise = remove_com(torch.randn_like(x_t))
                     # step size from the SNR rule (Song et al., alg. 4/5)

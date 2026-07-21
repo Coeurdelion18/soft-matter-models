@@ -50,8 +50,22 @@ class EGNNLayer(nn.Module):
     RBF_MAX = 0.4   # normalised units; nearest-neighbour spacing is ~0.04
                     # for 4000-particle patches (~0.1 for 1000-particle ones)
 
-    def __init__(self, hidden_dim, act=nn.SiLU):
+    def __init__(self, hidden_dim, cond_dim=0, act=nn.SiLU):
         super().__init__()
+        # FiLM conditioning: the conditioning vector (time + identity + field)
+        # produces a per-node scale (1 + dgamma) and shift beta applied to the
+        # node features after every layer update. Zero-initialised, so it
+        # starts as an exact identity. WHY: conditioning that enters only the
+        # input embedding gets washed out by the stacked residual+LayerNorm
+        # blocks -- measured: the field-conditioned model's guidance had
+        # almost no effect on samples (half-map probe split +0.03). FiLM
+        # gives the conditioning a direct pathway into every layer.
+        self.film = None
+        if cond_dim > 0:
+            self.film = nn.Linear(cond_dim, 2 * hidden_dim)
+            nn.init.zeros_(self.film.weight)
+            nn.init.zeros_(self.film.bias)
+
         # RBF expansion of edge length: raw dist/dist^2 scalars are a weak
         # signal for discriminating the fine scales that matter here (the
         # lattice spacing is only ~0.1 in normalised units); a Gaussian
@@ -78,11 +92,12 @@ class EGNNLayer(nn.Module):
             nn.init.xavier_uniform_(m[-1].weight, gain=1e-3)
             nn.init.zeros_(m[-1].bias)
 
-    def forward(self, h, x, edge_index):
+    def forward(self, h, x, edge_index, cond=None):
         """
         h: (N, hidden_dim) invariant node features
         x: (N, 2)          coordinates in the CoM-centred frame
         edge_index: (2, E) src/dst node indices
+        cond: (N, cond_dim) per-node conditioning vector for FiLM (optional)
         """
         src, dst = edge_index
         rel = x[src] - x[dst]                       # (E, 2)
@@ -111,6 +126,9 @@ class EGNNLayer(nn.Module):
 
         r = x.norm(dim=-1, keepdim=True)                       # (N, 1) invariant
         h_new = self.norm(h + self.node_mlp(torch.cat([h, agg_m, r], dim=-1)))
+        if self.film is not None and cond is not None:
+            dgamma, beta = self.film(cond).chunk(2, dim=-1)
+            h_new = h_new * (1.0 + dgamma) + beta
 
         radial = (x / (r + 1.0)) * self.radial_mlp(torch.cat([h_new, r], dim=-1))
         x_new = x + agg_x + radial
@@ -162,8 +180,10 @@ class EGNNUnconditionalDenoiser(nn.Module):
         self.time_embed = SinusoidalTimeEmbedding(hidden_dim)
         self.scalar_proj = nn.Linear(n_scalar_feats, hidden_dim)
         self.input_mlp = mlp(2 * hidden_dim, hidden_dim, hidden_dim)
+        # FiLM conditioning vector = [time embedding, scalar embedding]
         self.layers = nn.ModuleList(
-            [EGNNLayer(hidden_dim) for _ in range(n_layers)]
+            [EGNNLayer(hidden_dim, cond_dim=2 * hidden_dim)
+             for _ in range(n_layers)]
         )
 
     def forward(self, x_t, edge_index, noise_level, node_scalars):
@@ -179,11 +199,12 @@ class EGNNUnconditionalDenoiser(nn.Module):
 
         t_emb = self.time_embed(noise_level)
         s_emb = self.scalar_proj(node_scalars.float())
-        h = self.input_mlp(torch.cat([t_emb, s_emb], dim=-1))
+        cond = torch.cat([t_emb, s_emb], dim=-1)
+        h = self.input_mlp(cond)
 
         x = x_t
         for layer in self.layers:
-            h, x = layer(h, x, edge_index)
+            h, x = layer(h, x, edge_index, cond=cond)
 
         eps = x - x_t
         # project into the CoM-free subspace: the target noise is CoM-free,
