@@ -222,7 +222,7 @@ def main():
     if args.ref:
         compare_stats(a, b)
 
-    out = args.out or (Path(args.sample).stem + "_analysis.png")
+    out = args.out or ("outputs/results/" + Path(args.sample).stem + "_analysis.png")
     fig.tight_layout()
     fig.savefig(out, dpi=150, bbox_inches="tight")
     print(f"\nsaved {out}")

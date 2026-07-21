@@ -350,7 +350,7 @@ if __name__ == "__main__":
         n_bins=300,
         type_labels={1: "small", 0: "large"},
         plot=True,
-        save_path="gr_analysis.png",
+        save_path="outputs/results/gr_analysis.png",
     )
 
     print(f"\nUse CUTOFF = {cutoff:.4f} in train_unconditional.py")

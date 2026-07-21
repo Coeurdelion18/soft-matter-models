@@ -306,7 +306,7 @@ Conditioning source at sampling (constants in `sampling.py`, overridable via CLI
 - else → unconditional: the null token is fed as the field.
 
 Output: positions × coord_scale (physical units), saved with sizes/types to
-`generated_samples/sample_XXX.npz`.
+`outputs/generated_samples/sample_XXX.npz`.
 
 ## 8. Stage 1: the map generator
 
@@ -339,8 +339,9 @@ Output: positions × coord_scale (physical units), saved with sizes/types to
   |ψ6| / NN-distance / Voronoi-area / coordination distributions.
 - Defect identity is always `size > 1.2` (see the type-inversion warning in §4).
 
-Do not judge samples from `generated_samples.png` (a marker scatter — markers overlap
-visually at N=4000 regardless of true positions); use the evaluate panels and numbers.
+Do not judge samples from the marker-scatter overview image
+(`outputs/results/*s_overview.png` — markers overlap visually at N=4000 regardless of
+true positions); use the evaluate panels and numbers.
 
 ## 10. Appendix: narrative walkthrough — diffusion with the field, end to end
 

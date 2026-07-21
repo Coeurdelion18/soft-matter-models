@@ -21,7 +21,20 @@ two-stage diffusion pipeline:
   5.1 GB at N=10,050 (fits, but tight).
 - Always run scripts with `-u` (buffering hides output) and `MPLBACKEND=Agg`
   (scripts call `plt.show()`; the console is cp1252 — avoid unicode in print()).
-- Working directory: this folder (`equivariant_gnn_diffusion/`).
+- **Folder layout & how to run** (restructured July 21):
+  ```
+  equivariant_gnn_diffusion/
+  ├── src/         all .py (flat — they import each other as siblings)
+  ├── docs/        ARCHITECTURE, HANDOFF, REPORT, TODO
+  ├── data/        config/, npy/, patches/   (unchanged)
+  ├── checkpoints/                            (unchanged)
+  └── outputs/     generated_maps/, generated_samples/, results/
+  ```
+  ALWAYS run from the repo ROOT as `python src/<script>.py` (NOT `cd src`). This is
+  required: the script's own dir (`src/`) goes on `sys.path` so sibling imports
+  resolve, while the CWD stays at the root so the relative `data/`, `checkpoints/`,
+  and `outputs/` paths resolve. Running from inside `src/` breaks the data paths.
+  Analysis PNGs, samples, and maps now auto-land under `outputs/` — no manual moving.
 
 ## Data layout and conventions (critical gotchas)
 
@@ -127,15 +140,17 @@ two-stage diffusion pipeline:
 
 ## Standard workflow
 
+Run every command from the repo ROOT (see "Folder layout & how to run" above).
+
 ```
 # training (auto-resumes from checkpoints/model_best.pt; RESUME_FROM in train_patched.py)
-python train_patched.py                # ~3 min/epoch at N=4000
+python src/train_patched.py                # ~3 min/epoch at N=4000
 
 # generation (reads architecture/schedule/coord_scale from checkpoint)
-python sampling.py                     # see TARGET_MAP / TARGET_PATCH constants
+python src/sampling.py                     # see TARGET_MAP / TARGET_PATCH constants
 
 # evaluation (works on generated npz or patch npz)
-python evaluate.py generated_samples/sample_000.npz --ref data/patches/val/<patch>.npz
+python src/evaluate.py outputs/generated_samples/sample_000.npz --ref data/patches/val/<patch>.npz
 ```
 
 ## Diagnostic tools (use before guessing)

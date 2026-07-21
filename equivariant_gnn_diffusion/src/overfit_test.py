@@ -167,7 +167,7 @@ def main():
     print("\nsampling completed without diverging.")
 
     plot_comparison(pos, pos_sampled, types, sizes,
-                    save_path="overfit_comparison.png")
+                    save_path="outputs/results/overfit_comparison.png")
 
     print("\nIf the sampled panel is clearly lattice-like with the same extent "
           "as the original, the core pipeline works; remaining quality issues "

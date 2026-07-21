@@ -89,7 +89,7 @@ def main():
         ax.set_title(f"half-map binding probe, w={w}  "
                      f"(left target 0.75 / right target 1.0)")
         fig.colorbar(sc)
-        out = f"binding_probe_w{w:g}.png"
+        out = f"outputs/results/binding_probe_w{w:g}.png"
         fig.savefig(out, dpi=120, bbox_inches="tight")
         print(f"saved {out}")
 

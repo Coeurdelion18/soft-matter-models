@@ -24,7 +24,7 @@ from train_patched import identity_scalars
 
 # ── Config ────────────────────────────────────────────────────────────────────
 CHECKPOINT      = "checkpoints/model_best.pt"
-OUT_DIR         = "generated_samples"   # coordinates saved here as npz for evaluate.py
+OUT_DIR         = "outputs/generated_samples"   # coordinates saved here as npz for evaluate.py
 
 N_PARTICLES     = 4000          # match the patch size the model was trained on
 DEFECT_FRACTION = 50 / 10050    # composition of the real boxes
@@ -38,7 +38,7 @@ CORRECTOR_STEPS = 1             # Langevin corrector iterations per reverse step
                                 # cost but lets the configuration anneal)
 
 # For a field-conditioned model, three ways to choose the conditioning:
-#   TARGET_MAP   = "generated_maps/map_000.npy": condition on a NEW layout
+#   TARGET_MAP   = "outputs/generated_maps/map_000.npy": condition on a NEW layout
 #                  sampled by map_generator.py (two-stage generation --
 #                  brand-new pattern, nothing user-provided)
 #   TARGET_PATCH = "data/patches/...npz": replicate a real patch's psi6 map
@@ -128,7 +128,7 @@ def main():
         schedule=cfg.get("schedule", "cosine"),
     )
 
-    Path(OUT_DIR).mkdir(exist_ok=True)
+    Path(OUT_DIR).mkdir(parents=True, exist_ok=True)
 
     fig, axes = plt.subplots(1, N_SAMPLES, figsize=(7 * N_SAMPLES, 7))
     if N_SAMPLES == 1:
@@ -203,8 +203,8 @@ def main():
 
     fig.suptitle("Generated configurations from pure noise", fontsize=12, y=1.02)
     fig.tight_layout()
-    fig.savefig(f"{args.prefix}s_overview.png", dpi=150, bbox_inches="tight")
-    print(f"saved {args.prefix}s_overview.png")
+    fig.savefig(f"outputs/results/{args.prefix}s_overview.png", dpi=150, bbox_inches="tight")
+    print(f"saved outputs/results/{args.prefix}s_overview.png")
     plt.show()
 
 

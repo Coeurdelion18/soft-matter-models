@@ -154,8 +154,8 @@ and structurally hard for a local particle GNN. Division of labour by length sca
 - **Evaluation suite** (`evaluate.py`): density / |ψ6| / arg(ψ6) / Voronoi-sides panels
   (Delaunay-based, open-boundary aware, hull margin excluded) + Wasserstein distances of
   |ψ6|, NN-distance, Voronoi-area and coordination distributions vs a reference.
-- Generated coordinates saved (`generated_samples/*.npz`) for evaluation and downstream
-  use (e.g. LAMMPS relaxation).
+- Generated coordinates saved (`outputs/generated_samples/*.npz`) for evaluation and
+  downstream use (e.g. LAMMPS relaxation).
 
 ## 3. Quantitative trajectory
 

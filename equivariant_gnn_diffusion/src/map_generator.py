@@ -17,7 +17,7 @@ Usage:
     python map_generator.py train              # ~minutes on GPU
     python map_generator.py sample --n 4       # writes generated_maps/map_XXX.npy + preview png
 
-Then in sampling.py set TARGET_MAP = "generated_maps/map_000.npy".
+Then in sampling.py set TARGET_MAP = "outputs/generated_maps/map_000.npy".
 """
 
 import argparse
@@ -35,7 +35,7 @@ from field_conditioning import make_psi6_map
 # ── Config ────────────────────────────────────────────────────────────────────
 TRAIN_DIR   = "data/patches/train"
 CKPT        = "checkpoints/map_generator.pt"
-OUT_DIR     = "generated_maps"
+OUT_DIR     = "outputs/generated_maps"
 
 GRID_N      = 64
 N_STEPS     = 400
@@ -213,7 +213,7 @@ def sample(device, n):
     x = diff.sample(model, n).cpu().numpy()[:, 0]
     maps = np.clip(x * ckpt["std"] + ckpt["mean"], 0.0, 1.0)
 
-    Path(OUT_DIR).mkdir(exist_ok=True)
+    Path(OUT_DIR).mkdir(parents=True, exist_ok=True)
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt

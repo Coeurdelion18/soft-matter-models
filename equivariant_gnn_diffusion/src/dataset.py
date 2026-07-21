@@ -30,7 +30,7 @@ NPY_DIR         = "data/npy"      # converted npz files
 N_FILES_FOR_GR  = 10              # number of files to average g(r) over
 R_MAX           = None            # None = half the box; set explicitly if needed
 N_BINS          = 300
-SAVE_PLOT       = "gr_analysis.png"
+SAVE_PLOT       = "outputs/results/gr_analysis.png"
 # ──────────────────────────────────────────────────────────────────────────────
 
 

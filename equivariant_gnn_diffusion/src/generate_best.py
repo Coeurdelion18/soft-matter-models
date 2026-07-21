@@ -36,7 +36,7 @@ SIZE_SMALL, SIZE_LARGE = 1.0, 1.4
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--n-samples", type=int, default=5)
-    parser.add_argument("--out", default="generated_samples/best_model")
+    parser.add_argument("--out", default="outputs/generated_samples/best_model")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
